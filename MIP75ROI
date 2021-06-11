@@ -1,0 +1,242 @@
+// -Written in IJ1 Macro Fiji-
+
+//@File (label = "Input directory", style = "directory") chosenInputDir
+//@File (label = "Output directory", style = "directory") chosenOutputDir
+//@String (label = "File suffix", value = ".lif") fileExtension
+
+
+// Macro for measuring 0.75 times smaller objects within original objects
+// This macro runs on all imaging formats, batch process image by image (designed for lif series).
+// Macro written by alina.gavrilov@roche.com (with great help from jakob.stueber@roche.com and BioVoxxel (Jan Brocher)) 04.2020
+// Suggestions for improvement and constructive criticism are more than welcomed.
+
+// This Macro will:
+// 1) Get information from user about experiment to run analysis, get input and output directory for batch
+// 2) Generate Z-stack projection and MIP projection for all channels
+// 3) Create a mask on desired channel (called "DAPI") with Triangle threshold method + create ROI(s)
+// 4) Reduce the ROI(s) to 75% and place a new ROI in the center of detected object(s)
+// 5) Overlay selected ROI(s) to channel of interest (called "ChOI")
+// 6) Measure the previously set parameters within 75% object(s) + create results table
+// 7) Save tifs of all images as merged channels and overlayed ROI(s) on channel of interest and mask  
+// 8) Export measurements as excel and as txt files
+
+// Show info which directories user selected
+print ("Your selected input directory is " + chosenInputDir + ".");
+print ("Your selected input directory is " + chosenOutputDir + ".");
+
+// 1) Get information from user about experiment to run analysis, get input and output directory for batch
+// Dialogue: Select input and output directory and file format (only tested with lif!) --> 3 strings on top of macro
+// Dialogue: Which channel is mask channel (=DAPI) and channel of interest to be measured (=ChOI)? 
+Dialog.create("DAPI/mask channel selection");  
+Dialog.addChoice("Which channel is your DAPI/mask channel?", newArray("1","2","3","4","5"));
+Dialog.show();
+   DAPI = Dialog.getChoice();
+   print ("Your selected DAPI/mask is channel " + DAPI + ".");
+
+Dialog.create("Channel of interest selection");  
+Dialog.addChoice("What channel do you want to measure (channel of interest)?", newArray("1","2","3","4","5"));
+Dialog.show();
+   ChOI = Dialog.getChoice();
+   print ("Your selected channel of interest is channel " + ChOI + ".");
+
+// NOT DONE - Open first image of experiment, split channels
+// NOT DONE - Only if you got time: Adjust Auto-Brightness/Contrast for each channel (count channels, somehow with loop)
+// NOT DONE - Rename user defined DAPI channel on opened image (or even place a bold "this is mask channel" on top)
+// NOT DONE - Rename user defined Channel of interest on opened image (only for visualization for user + confirmation) 
+
+// Dialogue/boolean: Are you certain that this is right? Yes/No/Cancel
+// Answers: Yes --> Hint "Your analysis has started" + run script ; No --> "Well, try again..." + abort script, close all; Cancel --> abort script, close all
+
+if (getBoolean("Your DAPI/mask is channel " + DAPI + " and your channel of interest to be measured is channel " + ChOI + ". Is this correct?")) {   
+	showMessageWithCancel("Great! Your analysis will start after pressing Ok. Afterwards there is no way out ;). Open images & results will be closed.");
+//	showMessage("Great! Your analysis has started. There is no way out ;). Open images & results will be closed.");
+	}
+else
+	{
+	run("Close All");
+	exit("Well. I suggest, you get a coffee, think about your experiment and try again later. Analysis will be not performed.");    // stops script 
+	};
+
+// NOT DONE - Close all open images without saving (NOT DONE - only saves threshold informations for tiff files later on)
+// All following procedures will be done on ONE image. This will be analyzed, saved, closed. Only then, next one opens.
+run("Close All");
+// Closes the "Results" window
+    if (isOpen("Results")) {
+         selectWindow("Results"); 
+         run("Close" );
+    }
+
+// 2) Generate Z-stack projection and MIP projection for all channels
+// Batching intro here --> will open one image of a series, analyse, close, open next etc.
+inputDir = chosenInputDir + File.separator;
+outputDir = chosenOutputDir + File.separator;
+
+run("Bio-Formats Macro Extensions");
+
+processBioFormatFiles(inputDir); 	// This guy runs to whole script coming below.
+
+// Save as excel and Save as txt files to output directory 
+saveAs("Results", outputDir + "/all_results.csv");
+saveAs("Results", outputDir + "/all_results.txt");
+
+exit("Done! Your analysis is completed and your results are saved to " + outputDir + " .");
+
+function processBioFormatFiles(currentDirectory) {
+
+	fileList = getFileList(currentDirectory);
+
+	for (file = 0; file < fileList.length; file++) {
+
+		if (endsWith(fileList[file], fileExtension)) {
+			Ext.setId(currentDirectory + fileList[file]);
+			Ext.getSeriesCount(seriesCount);
+			
+			for (series = 1; series <= seriesCount; series++) {
+				//record the Bio-Formats importer with the setup you need if different from below and change accordingly
+// Bio-Format importer: Hyperstack, Composite
+				run("Bio-Formats Importer", "open=[" + currentDirectory + fileList[file] + "] autoscale color_mode=Composite display_rois rois_import=[ROI manager] view=Hyperstack stack_order=XYCZT series_"+series);
+				//add your macro code here
+	print("Processing: " + getTitle() + series);
+
+// Z-projection of all stacks with MIP projection for each channel in composite mode
+	title = getTitle();
+	new_title = "MAX_" + title;
+	selectWindow(title);	
+	run("Z Project...", "projection=[Max Intensity]");
+	
+// Close original image, only work with MAX_... image
+	selectWindow(title);	
+	close();
+	
+// Save tif image of composite view
+// Duplicate MAX_ image
+	run("Duplicate...", "duplicate");
+	
+// Add scale bar // Feel free to change predifined parameters
+	run("Scale Bar...", "width=100 height=6 font=24 color=White background=None location=[Lower Right] bold overlay");
+
+// Convert merged image to RGB format with Flatten function
+	run("Flatten");
+
+// Save as tif with suffix _merged
+	saving_title = replace(new_title, "/", "_" );
+	saveAs("Tiff", outputDir + saving_title + "_merged");
+
+// Close (make sure tif is selected)
+	close();							// activate me for batch
+	
+// Split channels
+	run("Split Channels");
+
+
+// 3) Create a mask on desired channel (called "DAPI") with Triangle threshold method + create ROI(s)
+// Select window with DAPI channel ("DAPI" user defined in the beginning by dialogue)
+selectWindow("C" + DAPI + "-" + "MAX_" + title);
+
+// Run Threshold... with Triangle method. Feel free to change method below to get more fitting results.
+// TROUBLE SHOOT option: Modifying threshold parameters by reducing the minimum size and minimum circularity (high circularity choosen for round opbjects)
+setAutoThreshold("Triangle dark");
+
+// Create a binary mask and modify mask to get outline of object without holes
+// TROUBLE SHOOT option: If you have a too sensitive mask, try to run "dilate..." and "erode..." function a few times before adding to ROI manager.
+run("Create Mask");
+run("Dilate");
+run("Fill Holes");
+run("Watershed");
+
+// Place ROI(s) on the outline of the mask(s) by run Analyze Particles... funciton and add to ROI manager. 
+run("Analyze Particles...", "size=8000-100000 circularity=0.5-1.00 exclude add");																// Change here parameters to adjust!!!
+
+// Goal: you got ROIs fitting to your DAPI signal to work with.
+
+
+// 4) Reduce the ROI to 75% and place a new ROI in the center of detected object(s)
+// Unselect and select ROI(s) 
+// TROUBLE SHOOT option: Be extra carefull when changing here! Double check with recorder to be sure.
+// NOT DONE yet: Note: in case no ROI(s) detected, window in the end will pop up saying "Attention: title no identified objects!"
+// Alternatively: Run the function run("Fit Circle");
+// Scale ROI(s) to 75% of their size. // Feel free to change the value 0.75 here to get an other scaling parameter.
+// Add new ROI(s) in ROI manager.
+// Update ROI manager by replacing previous ROI(s) with scaled ROI(s) 
+count = roiManager("count");
+current = roiManager("index");
+for (i = 0; i < count; i++) {
+	roiManager("select", i);
+	run("Scale... ", "x=0.75 y=0.75 centered");
+	roiManager("update");
+}
+if (current < 0)
+	roiManager("deselect");
+else
+	roiManager("select", current);
+
+// 5) Overlay selected ROI(s) to channel of interest (called "ChOI")
+// Select channel of interest ("ChOI" user definied)
+selectWindow("C" + ChOI + "-" + "MAX_" + title);
+
+// Deselect and select all newly scaled ROI(s)
+// Overlay ROI(s) on selected window with channel of interest window ("Show all").
+roiManager("Show None");
+roiManager("Show All");
+
+
+// 6) Measure the previously set parameters within 75% object(s) + create results table
+// Measure values of 75% reduced ROI(s) on channel of interest
+// Result table shows the measured parameters (Set measurements...),
+// each row represents one detected OBJECT (not one image). 
+// Name: "C..." indicating measured channel number, "title of series", "0001..." number of object
+// In case there is no detected object in an image, it will NOT show up in the table, but there will be a pop-up as well as the Log-print will tell
+roiManager("Measure");
+
+
+// 7) Save tifs of all images as merged channels and overlayed ROI(s) on channel of interest and mask  
+// Add scale bar // Feel free to change predifined parameters
+run("Scale Bar...", "width=100 height=6 font=24 color=White background=None location=[Lower Right] bold overlay");
+// NOT DONE yet: Adjust channel by channel with previously set values
+// Select window with channel of interest image // we assume it is still selected.
+// Convert channel of interest image with ROI(s) to RGB format with Flatten function
+run("Flatten");
+// Save as tif with suffix _ROI in output directory
+saving_title = replace(new_title, "/", "_" );
+saveAs("Tiff", outputDir + saving_title + "_ROI");
+
+// Select window called mask
+selectWindow("mask");
+// Convert mask image with ROI(s) to RGB format with Flatten function
+run("Flatten");
+// Save as tif renaming with title and suffix _mask in output directory
+saving_title = replace(new_title, "/", "_" );
+saveAs("Tiff", outputDir + saving_title + "_mask");
+// Reset ROI manager (deletes ROI(s))
+roiManager("reset");
+// Close close close close                           // activate me for batch mode
+
+
+run("Close All");
+
+
+
+// 8) Export measurements as excel and as txt files
+// "Saving to..." Log print
+print("Saving to " + outputDir);
+
+// End of the batch script					// activate for batch
+			}
+			
+		} else if (endsWith(fileList[file], "/")) {
+			processBioFormatFiles(currentDirectory + fileList[file]);
+		}
+	}
+}
+
+// Popup: You have successfully analyzed your data. NOT DONE - Attention: Images "title, title" had no detected objects.
+// DONE. 
+
+
+// If you have any suggestions, feel free to contact.
+// TROUBLE SHOOT options show you most likely possibilities why the script does not work properly on your files
+// Try to change the suggested parts and run it again
+ 
+
+ 
+
