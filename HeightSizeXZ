@@ -1,0 +1,173 @@
+//@File (label = "Input directory", style = "directory") chosenInputDir
+//@File (label = "Output directory", style = "directory") chosenOutputDir
+//@String (label = "File suffix", value = ".lif") fileExtension
+
+
+// Macro for measuring height in Z of an object
+// This macro runs on all imaging formats, batch process image by image (designed for lif series).
+// Macro written by alina.gavrilov@roche.com & elena.kassianidou@roche.com (with great help from BioVoxxel (Jan Brocher)) 08.2021, 
+// modified by elena.kassinaidou@roche.com to work on side projections updated 28.07.2021
+// Suggestions for improvement and constructive criticism are more than welcomed.
+
+// This Macro will:
+// 1) Get information from user about experiment to run analysis, get input and output directory for batch
+// 2) Generate XZ projection
+// 3) Create a mask on XZ projection with threshold method 
+// 4) Create ROI(s) based on DAPI mask
+// 5) Overlay selected ROI(s) to channel of interest (called "DAPI")
+// 6) Measure the previously set parameters within object(s) + create results table
+// 7) Save tifs of threshold parameters for ROI(s) on channel of interest 
+// 8) Export measurements as excel and as txt files
+
+
+//IMPORTANT: CHOOSE "BOUNDING RECTANGLE" in Analyze --> Set Measurements in order to measure height of objects
+// Results are saved in three different formats: .txt .xls and .csv
+
+// Show info which directories user selected
+print ("Your selected input directory is " + chosenInputDir + ".");
+print ("Your selected input directory is " + chosenOutputDir + ".");
+
+// 1) Get information from user about experiment to run analysis, get input and output directory for batch
+// Dialogue: Select input and output directory and file format (only tested with lif!) --> 3 strings on top of macro
+// Dialogue: Which channel is your channel of interest (mask channel (=DAPI))? 
+Dialog.create("DAPI/mask channel selection");  
+Dialog.addChoice("Which is your channel of interest (DAPI/mask) you want to measure?", newArray("1","2","3","4","5"));
+Dialog.show();
+   DAPI = Dialog.getChoice();
+   print ("Your selected channel of interest is " + DAPI + ".");
+
+// Dialogue/boolean: Are you certain that this is right? Yes/No/Cancel
+// Answers: Yes --> Hint "Your analysis has started" + run script ; No --> "Well, try again..." + abort script, close all; Cancel --> abort script, close all
+
+if (getBoolean("Your selected channel of interest is " + DAPI + ". Is this correct?")) {   
+	showMessageWithCancel("Great! Your analysis will start after pressing Ok. Afterwards there is no way out ;). Open images & results will be closed.");
+//	showMessage("Great! Your analysis has started. There is no way out ;). Open images & results will be closed.");
+	}
+else
+	{
+	run("Close All");
+	exit("Well. I suggest, you get a coffee, think about your experiment and try again later. Analysis will be not performed.");    // stops script 
+	};
+
+run("Close All");
+// Closes the "Results" window
+    if (isOpen("Results")) {
+         selectWindow("Results"); 
+         run("Close" );
+    }
+
+inputDir = chosenInputDir + File.separator;
+outputDir = chosenOutputDir + File.separator;
+
+run("Bio-Formats Macro Extensions");
+
+processBioFormatFiles(inputDir); 	// This guy runs to whole script coming below.
+
+saveAs("Results", outputDir + "/all_results.csv");
+saveAs("Results", outputDir + "/all_results.txt");
+saveAs("Results", outputDir + "/all_results.xls");
+
+exit("Done! Your analysis is completed and your results are saved to " + outputDir + " .");
+
+function processBioFormatFiles(currentDirectory) {
+
+	fileList = getFileList(currentDirectory);
+
+	for (file = 0; file < fileList.length; file++) {
+
+		if (endsWith(fileList[file], fileExtension)) {
+			Ext.setId(currentDirectory + fileList[file]);
+			Ext.getSeriesCount(seriesCount);
+			
+			for (series = 1; series <= seriesCount; series++) {
+				//record the Bio-Formats importer with the setup you need if different from below and change accordingly
+// Bio-Format importer: Hyperstack, Composite
+				run("Bio-Formats Importer", "open=[" + currentDirectory + fileList[file] + "] color_mode=Composite display_rois rois_import=[ROI manager] view=Hyperstack stack_order=XYCZT series_"+series);
+				//add your macro code here
+	print("Processing: " + getTitle() + series);
+
+	title = getTitle();
+	selectWindow(title);	
+	run("Orthogonal Views");
+
+// 3) Create a mask on desired channel (called "DAPI") with Triangle threshold method + create ROI(s)
+// Select window with DAPI channel ("DAPI" user defined in the beginning by dialogue)
+selectWindow("XZ 256");
+run("Duplicate...", "duplicate");
+run("16-bit");
+
+// Run Threshold with desired threshold parameters. Feel free to change method below to get more fitting results.
+// TROUBLE SHOOT option: Modifying threshold parameters by reducing the minimum size and minimum circularity (high circularity choosen for round opbjects)
+setAutoThreshold("Default dark");
+// Create a binary mask and modify mask to get outline of object without holes
+// TROUBLE SHOOT option: If you have a too sensitive mask, try to run "dilate..." and "erode..." function a few times before adding to ROI manager.
+run("Create Mask");
+run("Dilate");
+run("Fill Holes");
+selectWindow("mask");
+
+// Place ROI(s) on the outline of the mask(s) by run Analyze Particles... funciton and add to ROI manager. 
+// Change here parameters to adjust!!!
+run("Analyze Particles...", "size=1000-Infinity include add");
+// Goal: you got ROIs fitting to your DAPI signal to work with.
+
+new_title = "XZ 256_" + title;
+selectWindow("XZ 256");
+saving_title = replace(new_title, "/", "_" );
+saveAs("Tiff", outputDir + saving_title);
+
+// 4) Place a ROI on detected object(s)
+// Unselect and select ROI(s) 
+// TROUBLE SHOOT option: Be extra carefull when changing here! Double check with recorder to be sure.
+// Add new ROI(s) in ROI manager.
+// Update ROI manager by replacing previous ROI(s) with scaled ROI(s) 
+count = roiManager("count");
+current = roiManager("index");
+for (i = 0; i < count; i++) {
+	roiManager("select", i);
+}
+if (current < 0)
+	roiManager("deselect");
+else
+	roiManager("select", current);
+
+selectWindow("XZ 256-1");
+new_title =  "XZ 256-1_" + title;
+run("Flatten");
+
+new_title =  "XZ 256-2_" + title;
+saving_title = replace(new_title, "/", "_" );
+saveAs("Tiff", outputDir + saving_title + "_mask");
+
+
+roiManager("Show None");
+roiManager("Show All");
+
+// In case there is no detected object in an image, it will NOT show up in the table, but there will be a pop-up as well as the Log-print will tell
+//IMPORTANT: CHOOSE "BOUNDING RECTANGLE" in Analyze --> Set Measurements
+roiManager("Measure");
+close();
+roiManager("reset");
+
+run("Close All");
+
+// 8) Export measurements as excel and as txt files
+// "Saving to..." Log print
+print("Saving to " + outputDir);
+
+// End of the batch script			
+			}
+			
+		} else if (endsWith(fileList[file], "/")) {
+			processBioFormatFiles(currentDirectory + fileList[file]);
+		}
+	}
+}
+
+// If you have any suggestions, feel free to contact.
+// TROUBLE SHOOT options show you most likely possibilities why the script does not work properly on your files
+// Try to change the suggested parts and run it again
+ 
+
+ 
+
