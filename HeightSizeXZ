@@ -4,6 +4,8 @@
 
 
 // Macro for measuring height in Z of an object
+// This plugin will only work with 512x512 images. 
+// If other pixel size images are used, the user needs to modify the script and replace "XZ256" with "XZn" where n is the number of pixels divided by 2. For example, for a 1024x1024, the user should use "XZ512"
 // This macro runs on all imaging formats, batch process image by image (designed for lif series).
 // Macro written by alina.gavrilov@roche.com & elena.kassianidou@roche.com (with great help from BioVoxxel (Jan Brocher)) 08.2021, 
 // modified by elena.kassinaidou@roche.com to work on side projections updated 28.07.2021
