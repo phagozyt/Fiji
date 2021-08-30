@@ -1,5 +1,3 @@
-// -Written in IJ1 Macro Fiji-
-
 //@File (label = "Input directory", style = "directory") chosenInputDir
 //@File (label = "Output directory", style = "directory") chosenOutputDir
 //@String (label = "File suffix", value = ".lif") fileExtension
